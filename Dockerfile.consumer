@@ -1,0 +1,45 @@
+# Dockerfile.consumer — Consumer App (Python/FastAPI)
+# Pattern: multi-stage, non-root, minimal runtime
+# Source: docker-expert skill
+
+# --- Build stage ---
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Install build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# --- Runtime stage ---
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Copy only installed packages
+COPY --from=builder /root/.local /home/appuser/.local
+
+# Copy app code
+COPY consumer_app/ ./consumer_app/
+COPY schemas/ ./schemas/
+
+ENV PATH=/home/appuser/.local/bin:$PATH \
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+
+USER appuser
+
+EXPOSE 8090
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD curl -sf http://localhost:8090/health || exit 1
+
+CMD ["uvicorn", "consumer_app.main:app", "--host", "0.0.0.0", "--port", "8090"]

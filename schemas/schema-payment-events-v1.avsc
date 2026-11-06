@@ -1,0 +1,77 @@
+{
+  "type": "record",
+  "name": "PaymentEvent",
+  "namespace": "com.bootcamp.payments",
+  "required": ["event_id", "op", "table_name", "before", "after", "ts"],
+  "doc": "Envelope CDC Debezium PostgresCdcSourceV2 -> desafio.payments.*. Money = bytes(int64 cents) + decimal(15,2); tags PII/PCI no campos sensiveis.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "required": true,
+      "doc": "UUID do evento CDC"
+    },
+    {
+      "name": "op",
+      "type": "int",
+      "required": true,
+      "doc": "0=INSERT 1=UPDATE 2=DELETE"
+    },
+    {
+      "name": "table_name",
+      "type": "string",
+      "required": true,
+      "doc": "customers|accounts|cards|merchants|transactions"
+    },
+    {
+      "name": "before",
+      "type": ["null", {
+        "type": "record",
+        "name": "BeforeRow",
+        "namespace": "com.bootcamp.payments",
+        "fields": [
+          { "name": "row_id", "type": "long" },
+          { "name": "customer_id", "type": ["null", "long"], "default": null },
+          { "name": "account_id", "type": ["null", "long"], "default": null },
+          { "name": "amount_cents", "type": "long", "required": true, "doc": "money=bytes(int64 cents)" },
+          { "name": "amount_decimal", "type": "string", "required": true, "doc": "decimal(15,2)" },
+          { "name": "currency", "type": "string" },
+          { "name": "card_id", "type": ["null", "long"], "default": null },
+          { "name": "merchant_id", "type": ["null", "long"], "default": null },
+          { "name": "card_number", "type": ["null", "string"], "default": null, "doc": "PCI masked", "tags": ["PCI"] },
+          { "name": "customer_email", "type": ["null", "string"], "default": null, "doc": "PII", "tags": ["PII"] }
+        ]
+      }],
+      "default": null,
+      "required": true,
+      "doc": "snapshot anterior (REPLICA IDENTITY FULL)"
+    },
+    {
+      "name": "after",
+      "type": ["null", {
+        "type": "record",
+        "name": "AfterRow",
+        "namespace": "com.bootcamp.payments",
+        "fields": [
+          { "name": "row_id", "type": "long" },
+          { "name": "transaction_id", "type": ["null", "long"], "default": null },
+          { "name": "amount_cents", "type": "long", "required": true, "doc": "money=bytes(int64 cents)" },
+          { "name": "amount_decimal", "type": "string", "required": true, "doc": "decimal(15,2)" },
+          { "name": "currency", "type": "string" },
+          { "name": "card_id", "type": ["null", "long"], "default": null },
+          { "name": "merchant_id", "type": ["null", "long"], "default": null },
+          { "name": "card_number", "type": ["null", "string"], "default": null, "doc": "PCI masked", "tags": ["PCI"] },
+          { "name": "customer_email", "type": ["null", "string"], "default": null, "doc": "PII", "tags": ["PII"] }
+        ]
+      }],
+      "default": null,
+      "required": true,
+      "doc": "snapshot posterior"
+    },
+    { "name": "ts", "type": "long", "required": true, "doc": "timestamp-millis" },
+    { "name": "transaction_id", "type": ["null", "long"], "default": null },
+    { "name": "account_id", "type": ["null", "long"], "default": null },
+    { "name": "card_id", "type": ["null", "long"], "default": null },
+    { "name": "merchant_id", "type": ["null", "long"], "default": null }
+  ]
+}

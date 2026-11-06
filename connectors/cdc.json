@@ -1,0 +1,22 @@
+{
+  "name": "postgres-cdc-desafio",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresCdcSourceV2",
+    "database.hostname": "${NEON_DATABASE_URL}",
+    "database.port": "5432",
+    "database.dbname": "${NEON_DATABASE_NAME}",
+    "database.user": "${NEON_CDC_USER}",
+    "database.password": "${NEON_CDC_PASSWORD}",
+    "publickey.clients": "nn-credential-np",
+    "publickey.servers": "pn/np",
+    "slot.name": "desafio_cdc_slot",
+    "snapshot.mode": "initial",
+    "heartbeat.interval.ms": "60000",
+    "offset.flush.interval.ms": "60000",
+    "topic.prefix": "desafio.payments",
+    "topic.whitelist": "desafio.payments.customers,desafio.payments.accounts,desafio.payments.cards,desafio.payments.merchants,desafio.payments.transactions",
+    "table.include.list": "customers,accounts,cards,merchants,transactions",
+    "value.converter.schemas.enable": "true",
+    "value.converter.schema.registry.url": "${SCHEMA_REGISTRY_URL}"
+  }
+}

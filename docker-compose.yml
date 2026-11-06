@@ -1,0 +1,221 @@
+# Docker Compose — Pipeline de Pagamentos (desafio-final)
+# Pattern: multi-stage, health checks, secrets via files, resource limits
+# Source: docker-expert skill best practices
+# Usage: docker compose up -d   /   docker compose down -v
+
+version: '3.8'
+
+services:
+  # --- DATABASE ---
+  neon-postgres:
+    image: postgres:15-alpine
+    container_name: desafio-postgres
+    environment:
+      POSTGRES_DB: ${NEON_DATABASE_NAME:-desafio-final}
+      POSTGRES_USER: desafio_pg
+      POSTGRES_PASSWORD: ${NEON_PG_PASSWORD:-desafio_pg}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_INITDB_ARGS: "--auth=trust"   # híbrido: app creds + cdc_user no CDC
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/00-schema.sql:/docker-entrypoint-initdb.d/00-schema.sql:ro
+      - ./seed:/seed:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-desafio_pg}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [internal]
+
+  # --- KAFKA ---
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: desafio-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,broker:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAMES: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks: [internal]
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: desafio-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  # --- SCHEMA REGISTRY ---
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: desafio-schema-registry
+    depends_on:
+      - kafka
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:9092"
+      SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+      SCHEMA_REGISTRY_INTER_BROKER_LISTENER_NAMES: PLAINTEXT
+    ports:
+      - "${SCHEMA_REGISTRY_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  # --- KAFKA CONNECT ---
+  connect:
+    image: confluentinc/cp-kafka-connect:7.5.0
+    container_name: desafio-connect
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      CONNECT_BOOTSTRAP_servers: "kafka:9092"
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: "desafio-connect"
+      CONNECT_CONFIG_STORAGE_TOPIC: "desafio-connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "desafio-connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "desafio-connect-status"
+      CONNECT_KEY_FORMAT: "io.debezium.format.avro.AvroConverter"
+      CONNECT_VALUE_FORMAT: "io.debezium.format.avro.AvroConverter"
+      CONNECT_KEY_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONNECT_VALUE_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONNECT_PLUGIN_DIR: "/usr/share/java,/usr/share/confluent-packages"
+      CONNECT_INTERNAL_KEY_CONVERTER: "io.debezium.runtime.StringSerializer"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonSerializer"
+      CONNECT_REST_HEALTH_ENABLED: "true"
+    ports:
+      - "${CONNECT_PORT:-8083}:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  # --- FLINK ---
+  flink-jobmanager:
+    image: flink:1.17-java11
+    container_name: desafio-flink-jm
+    command: jobmanager
+    environment:
+      FLINK_PARALLELISM: 2
+    ports:
+      - "${FLINK_REST_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/overview || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  flink-taskmanager:
+    image: flink:1.17-java11
+    container_name: desafio-flink-tm
+    command: taskmanager
+    environment:
+      FLINK_PARALLELISM: 2
+      FLINK_JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
+    volumes:
+      - flink_plugins:/opt/flink/lib/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/overview || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks: [internal]
+
+  # --- OBSERVABILITY ---
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: desafio-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROM_PORT:-9090}:9090"
+    networks: [internal]
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: desafio-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      - prometheus
+    networks: [internal]
+
+  # --- CONSUMER APP ---
+  consumer-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    container_name: desafio-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: "kafka:9092"
+      SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      PROMETHEUS_URL: http://prometheus:9090
+    ports:
+      - "${CONSUMER_APP_PORT:-8090}:8090"
+    restart: unless-stopped
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+  flink_plugins:

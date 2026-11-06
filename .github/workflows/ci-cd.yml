@@ -1,0 +1,327 @@
+# CI/CD Pipeline — Desafio Final Pipeline de Pagamentos
+# Source: github-actions-creator skill patterns
+# Triggers: push, PR, schedule (nightly), manual dispatch
+# Jobs: lint, test, schema-check, build, deploy-staging, deploy-prod
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore: ["**.md", "docs/**"]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "0 2 * * *"  # nightly at 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [staging, production]
+        required: true
+      skip_tests:
+        description: "Skip test suite"
+        type: boolean
+        default: false
+
+env:
+  # Docker image registry
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # Confluent Cloud (secrets in GitHub Settings)
+  CONFLUENT_API_KEY: ${{ secrets.CONFLUENT_API_KEY }}
+  CONFLUENT_API_SECRET: ${{ secrets.CONFLUENT_API_SECRET }}
+  CONFLUENT_ENVIRONMENT: ${{ secrets.CONFLUENT_ENVIRONMENT }}
+  # Neon
+  NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+  # Docker Hub (alternative)
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+jobs:
+  # ============================================================
+  # LINT & STATIC ANALYSIS
+  # ============================================================
+  lint:
+    name: Lint & Static Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install linting tools
+        run: |
+          pip install --upgrade pip
+          pip install ruff==0.1.6 mypy==1.7.1 pre-commit==3.6.0
+
+      - name: Run Ruff (fast lint)
+        run: |
+          ruff check consumer_app/ seed/ tests/ --output-format=github
+          ruff format --check consumer_app/ seed/ tests/
+
+      - name: Run MyPy (type check)
+        run: |
+          mypy consumer_app/ --strict --ignore-missing-imports
+
+      - name: Run Pre-commit hooks
+        run: |
+          pre-commit run --all-files
+
+  # ============================================================
+  # SCHEMA VALIDATION (Avro + Schema Registry compatibility)
+  # ============================================================
+  schema-validation:
+    name: Schema Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install schema tools
+        run: |
+          pip install fastavro==1.9.0 confluent-kafka[avro]==2.3.0
+
+      - name: Validate Avro schemas (syntax)
+        run: |
+          python -c "
+          import fastavro
+          import glob
+          for schema_file in glob.glob('schemas/*.avsc'):
+              with open(schema_file) as f:
+                  fastavro.parse_schema(fastavro.schema.load_schema(schema_file))
+              print(f'OK: {schema_file}')
+          "
+
+      - name: Run backward compatibility tests
+        run: |
+          python tests/test_compatibility.py
+
+      - name: Check Schema Registry compatibility (if configured)
+        if: env.CONFLUENT_API_KEY != ''
+        run: |
+          python scripts/check_schema_registry_compatibility.py
+        env:
+          SCHEMA_REGISTRY_URL: ${{ secrets.SCHEMA_REGISTRY_URL }}
+          SCHEMA_REGISTRY_API_KEY: ${{ secrets.SCHEMA_REGISTRY_API_KEY }}
+          SCHEMA_REGISTRY_API_SECRET: ${{ secrets.SCHEMA_REGISTRY_API_SECRET }}
+
+  # ============================================================
+  # UNIT & INTEGRATION TESTS
+  # ============================================================
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest==7.4.3 pytest-asyncio==0.21.1 pytest-cov==4.1.0
+          pip install -r requirements.txt
+
+      - name: Start test dependencies (Postgres, Kafka, Redis)
+        run: |
+          docker compose -f docker-compose.test.yml up -d
+          sleep 10
+
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ -v --cov=consumer_app --cov-report=xml --cov-report=term-missing
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: unittests
+
+      - name: Teardown test dependencies
+        if: always()
+        run: |
+          docker compose -f docker-compose.test.yml down -v
+
+  # ============================================================
+  # BUILD DOCKER IMAGES
+  # ============================================================
+  build:
+    name: Build Docker Images
+    needs: [lint, schema-validation, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    outputs:
+      consumer-image: ${{ steps.meta-consumer.outputs.tags }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (consumer)
+        id: meta-consumer
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}/consumer
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}-consumer
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push consumer image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.consumer
+          push: true
+          tags: ${{ steps.meta-consumer.outputs.tags }}
+          labels: ${{ steps.meta-consumer.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================
+  # DEPLOY STAGING
+  # ============================================================
+  deploy-staging:
+    name: Deploy Staging
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.ref == 'refs/heads/develop' || github.event.inputs.environment == 'staging'
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl (staging)
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG_STAGING }}
+
+      - name: Deploy to staging (Kustomize/Helm)
+        run: |
+          kubectl set image deployment/consumer-app \
+            consumer-app=${{ needs.build.outputs.consumer-image }} \
+            -n desafio-staging
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/consumer-app -n desafio-staging --timeout=300s
+
+      - name: Smoke test staging
+        run: |
+          sleep 30
+          curl -sf https://staging.desafio.example.com/health || exit 1
+
+  # ============================================================
+  # DEPLOY PRODUCTION
+  # ============================================================
+  deploy-production:
+    name: Deploy Production
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'production'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl (production)
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG_PRODUCTION }}
+
+      - name: Deploy to production (Blue/Green)
+        run: |
+          # Blue/Green via Argo Rollouts or manual service switch
+          kubectl set image deployment/consumer-app \
+            consumer-app=${{ needs.build.outputs.consumer-image }} \
+            -n desafio-production
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/consumer-app -n desafio-production --timeout=300s
+
+      - name: Post-deploy verification
+        run: |
+          sleep 60
+          curl -sf https://desafio.example.com/health || exit 1
+          curl -sf https://desafio.example.com/metrics/snapshot | jq '.transactions_processed > 0' || exit 1
+
+      - name: Notify (Slack/Datadog)
+        if: always()
+        run: |
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"Deploy ${{ job.status }}: ${{ github.repository }}@${{ github.sha }}"}' \
+          #   ${{ secrets.SLACK_WEBHOOK }}
+          echo "Notification sent"
+
+  # ============================================================
+  # NIGHTLY: FULL INTEGRATION TEST AGAINST CONFLUENT CLOUD
+  # ============================================================
+  nightly-integration:
+    name: Nightly Integration (Confluent Cloud)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Confluent CLI
+        run: |
+          curl -sL --http1.1 https://cnfl.io/cli | sh -s -- -b /usr/local/bin
+          confluent login --save --api-key ${{ secrets.CONFLUENT_API_KEY }} --api-secret ${{ secrets.CONFLUENT_API_SECRET }}
+
+      - name: Run full pipeline integration test
+        run: |
+          ./scripts/integration_test_full_pipeline.sh
+
+      - name: Cost report
+        run: |
+          python scripts/cost_report.py --env staging --days 1

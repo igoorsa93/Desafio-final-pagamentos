@@ -1,0 +1,67 @@
+# Flink Configuration — Pipeline de Pagamentos
+# Source: senior-architect + workflow-automation + code-reviewer
+# Key: [component] [setting] [value] + justification
+
+parallelism: 2
+parallelism.default: 2
+jobmanager.memory.process.size: 1073741824   # 1GB JVM
+taskmanager.memory.process.size: 1073741824  # 1GB per TM
+execution.target: pipeline
+execution.type: single
+
+# Checkpointing (exactly-once)
+state: checksums.interval: 60s
+checkpoints.interval: 10s
+checkpoints.timeout: 300s
+externalized.checkpoints: true
+externalized.checkpoints.delete-on-cancellation: true
+
+# Idle timeout (watermark watchdog — evitar watermarks travados)
+sql:
+  tables:
+    scan:
+      idle-timeout: 5s
+
+# Checkpoint compression (tamanho reduzido → mais checkpoints a fazer)
+fs.checkpoint.compress: true
+
+# RPC timeout
+state.backend.incremental: true
+state.backend.type: rocksdb
+state.backend.rocksdb.memory.managed: false  # control manual para performance tuning
+
+# Network buffer (reduzir buffer → reduzir latência, trade-off: throughput)
+taskmanager.network.memory.fraction: 0.1
+taskmanager.network.memory.min: 2147483648    # 2GB min
+taskmanager.network.memory.max: 4294967296     # 4GB max
+
+# Event time watermarks (bounded out-of-orderness: 10s → TOLERÂNCIA BAIXA PARA LATE DATA)
+sql.streaming.allowed-lateness: 60s
+sql.window.task.max-waiting-time: 30s
+
+# Kafka connector optimize
+sql.kafka.consumer.cache.partitions: 5
+sql.connect.partitioner: fixed
+
+# Resource management
+scheduler-mode: external
+restart-strategy:
+  fixed-delay:
+    attempts: 3
+    delay: 10s
+  fallback:
+    fixed-delay:
+      attempts: 1
+      delay: 0s
+
+# Metrics
+metrics.exporter.include.builtin: true
+metrics.latency.latency-granularity: microsecond
+metrics.latency.time-interval: 10000
+
+# SQL logging (debug only — produção desligar)
+# sql-client.sql-logging.level: DEBUG
+
+# JobManager REST
+rest.address: flink-jobmanager
+rest.port: 8081

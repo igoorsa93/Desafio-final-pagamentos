@@ -1,0 +1,185 @@
+# Prometheus Alerting Rules — Pipeline de Pagamentos
+# Source: workflow-automation observability patterns
+
+groups:
+  - name: pipeline-cdc
+    interval: 30s
+    rules:
+      - alert: CDCLagHigh
+        expr: |
+          debezium_connector_max_lag_seconds > 300
+        for: 5m
+        labels:
+          severity: critical
+          team: data-engineering
+        annotations:
+          summary: "CDC lag > 5 minutes"
+          description: "Debezium connector {{ $labels.connector }} lag is {{ $value | humanizeDuration }}. Check Neon replication slot."
+
+      - alert: CDCDown
+        expr: |
+          up{job="kafka-connect"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: data-engineering
+        annotations:
+          summary: "Kafka Connect down"
+          description: "Debezium Connect process is not running. CDC pipeline halted."
+
+      - alert: ReplicationSlotLag
+        expr: |
+          pg_replication_slot_lag_bytes > 1073741824  # 1GB
+        for: 10m
+        labels:
+          severity: warning
+          team: data-engineering
+        annotations:
+          summary: "Replication slot lag > 1GB"
+          description: "Postgres replication slot {{ $labels.slot_name }} lag is {{ $value | humanizeBytes }}. Risk of disk pressure on Neon."
+
+  - name: pipeline-kafka
+    interval: 30s
+    rules:
+      - alert: KafkaUnderReplicated
+        expr: |
+          kafka_server_replicamanager_underreplicatedpartitions > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Kafka under-replicated partitions"
+          description: "{{ $value }} under-replicated partitions detected. Check broker health."
+
+      - alert: KafkaOfflinePartitions
+        expr: |
+          kafka_controller_kafkacontroller_offlinepartitionscount > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Kafka offline partitions"
+          description: "{{ $value }} offline partitions. Data unavailable."
+
+      - alert: ConsumerLagHigh
+        expr: |
+          kafka_consumergroup_lag{group=~"desafio.*"} > 10000
+        for: 5m
+        labels:
+          severity: warning
+          team: data-engineering
+        annotations:
+          summary: "Consumer lag > 10k"
+          description: "Consumer group {{ $labels.group }} lag on {{ $labels.topic }} partition {{ $labels.partition }} is {{ $value }}."
+
+  - name: pipeline-flink
+    interval: 30s
+    rules:
+      - alert: FlinkJobFailed
+        expr: |
+          flink_jobmanager_job_status{status="FAILED"} == 1
+        for: 0m
+        labels:
+          severity: critical
+          team: data-engineering
+        annotations:
+          summary: "Flink job failed"
+          description: "Job {{ $labels.job_name }} ({{ $labels.job_id }}) failed. Check checkpoints and taskmanager logs."
+
+      - alert: FlinkCheckpointFailed
+        expr: |
+          increase(flink_jobmanager_job_last_checkpoint_duration[5m]) > 0
+          and flink_jobmanager_job_last_checkpoint_size > 0
+          and flink_jobmanager_job_last_checkpoint_duration > 300000
+        for: 2m
+        labels:
+          severity: warning
+          team: data-engineering
+        annotations:
+          summary: "Flink checkpoint slow/failed"
+          description: "Job {{ $labels.job_name }} checkpoint taking > 5min or failing. Exactly-once at risk."
+
+      - alert: FlinkBackpressure
+        expr: |
+          flink_taskmanager_job_task_backpressure_ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: data-engineering
+        annotations:
+          summary: "Flink backpressure > 80%"
+          description: "Task {{ $labels.task_name }} in job {{ $labels.job_name }} experiencing backpressure. Consider scaling parallelism."
+
+  - name: pipeline-schema
+    interval: 60s
+    rules:
+      - alert: SchemaRegistryDown
+        expr: |
+          up{job="schema-registry"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Schema Registry down"
+          description: "Schema Registry unavailable. New producers/consumers cannot register/fetch schemas."
+
+      - alert: SchemaIncompatibility
+        expr: |
+          schema_registry_subject_compatibility_level{compatibility!="BACKWARD"} > 0
+        for: 0m
+        labels:
+          severity: warning
+          team: data-engineering
+        annotations:
+          summary: "Schema compatibility not BACKWARD"
+          description: "Subject {{ $labels.subject }} has compatibility {{ $labels.compatibility }}. Breaks consumer compatibility."
+
+  - name: pipeline-business
+    interval: 60s
+    rules:
+      - alert: FraudAlertSpike
+        expr: |
+          increase(consumer_fraud_alerts_received_total[5m]) > 50
+        for: 2m
+        labels:
+          severity: warning
+          team: fraud
+        annotations:
+          summary: "Fraud alert spike detected"
+          description: "{{ $value }} fraud alerts in last 5 minutes. Potential attack or rule tuning needed."
+
+      - alert: TransactionProcessingStalled
+        expr: |
+          increase(consumer_transactions_processed_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          team: data-engineering
+        annotations:
+          summary: "Transaction processing stalled"
+          description: "No transactions processed in last 10 minutes. Check Flink job and Kafka topics."
+
+      - alert: HighDedupRate
+        expr: |
+          rate(consumer_dedup_hits_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: data-engineering
+        annotations:
+          summary: "High deduplication rate"
+          description: "{{ $value }}/s duplicate transactions. Possible producer retry storm or CDC duplicate emission."
+
+      - alert: DLQGrowing
+        expr: |
+          increase(consumer_dlq_messages_total[15m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: data-engineering
+        annotations:
+          summary: "DLQ growing rapidly"
+          description: "{{ $value }} messages sent to DLQ in 15 minutes. Check deserialization errors."

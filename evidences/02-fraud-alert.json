@@ -1,0 +1,13 @@
+{
+  "alert_id": "FRAUD-1001-3",
+  "rule": "RULE_VELOCITY",
+  "card_id": 1001,
+  "hit_count": 3,
+  "hits": [
+    { "transaction_id": 101, "merchant_id": 5, "amount_cents": 12000, "amount_decimal": "120.00", "event_ts": 1000000 },
+    { "transaction_id": 402, "merchant_id": 17, "amount_cents": 24000, "amount_decimal": "240.00", "event_ts": 3000000 },
+    { "transaction_id": 803, "merchant_id": 33, "amount_cents": 15000, "amount_decimal": "150.00", "event_ts": 5900000 }
+  ],
+  "emitted_at": 5900001,
+  "source_topic": "desafio.fraud.detected"
+}

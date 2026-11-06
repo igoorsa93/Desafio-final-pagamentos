@@ -1,0 +1,113 @@
+# Prometheus Configuration — Pipeline de Pagamentos
+# Scrape configs for: Kafka, Flink, Connect, Postgres, Consumer App
+# Source: docker-expert + workflow-automation observability patterns
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "desafio-final"
+    environment: "local"
+
+# Alertmanager (optional)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+# Rule files
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+  # --- Prometheus self ---
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # --- Kafka (JMX Exporter on port 7071) ---
+  - job_name: "kafka"
+    static_configs:
+      - targets: ["kafka:7071"]
+        labels:
+          component: "kafka"
+          tier: "messaging"
+    metrics_path: "/metrics"
+
+  # --- Zookeeper (JMX Exporter on port 7072) ---
+  - job_name: "zookeeper"
+    static_configs:
+      - targets: ["zookeeper:7072"]
+        labels:
+          component: "zookeeper"
+          tier: "coordination"
+
+  # --- Kafka Connect (Debezium) ---
+  - job_name: "kafka-connect"
+    static_configs:
+      - targets: ["connect:8083"]
+        labels:
+          component: "connect"
+          tier: "cdc"
+    metrics_path: "/metrics"
+
+  # --- Schema Registry ---
+  - job_name: "schema-registry"
+    static_configs:
+      - targets: ["schema-registry:8081"]
+        labels:
+          component: "schema-registry"
+          tier: "schema"
+    metrics_path: "/metrics"
+
+  # --- Flink JobManager ---
+  - job_name: "flink-jobmanager"
+    static_configs:
+      - targets: ["flink-jobmanager:9251"]
+        labels:
+          component: "flink-jobmanager"
+          tier: "stream-processing"
+    metrics_path: "/metrics"
+
+  # --- Flink TaskManager ---
+  - job_name: "flink-taskmanager"
+    static_configs:
+      - targets: ["flink-taskmanager:9252"]
+        labels:
+          component: "flink-taskmanager"
+          tier: "stream-processing"
+    metrics_path: "/metrics"
+
+  # --- Postgres (postgres_exporter on port 9187) ---
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          component: "postgres"
+          tier: "database"
+    metrics_path: "/metrics"
+
+  # --- Consumer App ---
+  - job_name: "consumer-app"
+    static_configs:
+      - targets: ["consumer-app:8090"]
+        labels:
+          component: "consumer-app"
+          tier: "application"
+    metrics_path: "/metrics"
+
+  # --- Node Exporter (host metrics) ---
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          component: "node-exporter"
+          tier: "infrastructure"
+
+  # --- Cadvisor (container metrics) ---
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          component: "cadvisor"
+          tier: "infrastructure"

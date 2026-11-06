@@ -1,0 +1,78 @@
+{
+  "type": "record",
+  "name": "PaymentEventV2",
+  "namespace": "com.bootcamp.payments",
+  "required": ["event_id", "op", "table_name", "before", "after", "ts"],
+  "doc": "V2 backward-compatible: adiciona campo tx_currency_code com default 'USD' -> leitores V1 continuam aceitando.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "op",
+      "type": "int",
+      "required": true
+    },
+    {
+      "name": "table_name",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "before",
+      "type": ["null", {
+        "type": "record",
+        "name": "BeforeRow",
+        "namespace": "com.bootcamp.payments",
+        "fields": [
+          { "name": "row_id", "type": "long" },
+          { "name": "customer_id", "type": ["null", "long"], "default": null },
+          { "name": "account_id", "type": ["null", "long"], "default": null },
+          { "name": "amount_cents", "type": "long", "required": true },
+          { "name": "amount_decimal", "type": "string", "required": true },
+          { "name": "currency", "type": "string" },
+          { "name": "card_id", "type": ["null", "long"], "default": null },
+          { "name": "merchant_id", "type": ["null", "long"], "default": null },
+          { "name": "card_number", "type": ["null", "string"], "default": null, "tags": ["PCI"] },
+          { "name": "customer_email", "type": ["null", "string"], "default": null, "tags": ["PII"] }
+        ]
+      }],
+      "default": null,
+      "required": true
+    },
+    {
+      "name": "after",
+      "type": ["null", {
+        "type": "record",
+        "name": "AfterRow",
+        "namespace": "com.bootcamp.payments",
+        "fields": [
+          { "name": "row_id", "type": "long" },
+          { "name": "transaction_id", "type": ["null", "long"], "default": null },
+          { "name": "amount_cents", "type": "long", "required": true },
+          { "name": "amount_decimal", "type": "string", "required": true },
+          { "name": "currency", "type": "string" },
+          { "name": "card_id", "type": ["null", "long"], "default": null },
+          { "name": "merchant_id", "type": ["null", "long"], "default": null },
+          { "name": "card_number", "type": ["null", "string"], "default": null, "tags": ["PCI"] },
+          { "name": "customer_email", "type": ["null", "string"], "default": null, "tags": ["PII"] }
+        ]
+      }],
+      "default": null,
+      "required": true
+    },
+    { "name": "ts", "type": "long", "required": true },
+    { "name": "transaction_id", "type": ["null", "long"], "default": null },
+    { "name": "account_id", "type": ["null", "long"], "default": null },
+    { "name": "card_id", "type": ["null", "long"], "default": null },
+    { "name": "merchant_id", "type": ["null", "long"], "default": null },
+    {
+      "name": "tx_currency_code",
+      "type": ["null", "string"],
+      "default": "USD",
+      "doc": "NOVO em V2 — opcional com default; V1 readers aceitam payload ausente"
+    }
+  ]
+}

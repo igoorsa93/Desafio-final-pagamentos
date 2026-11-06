@@ -1,0 +1,20 @@
+{
+  "type": "record",
+  "name": "FraudAlert",
+  "namespace": "com.bootcamp.payments",
+  "doc": "Alerta emitido em desafio.fraud.detected (RULE_VELOCITY via MATCH_RECOGNIZE).",
+  "fields": [
+    { "name": "alert_id", "type": "string", "required": true, "doc": "FRAUD-<card>-<count>" },
+    { "name": "rule", "type": "string", "required": true, "doc": "RULE_VELOCITY" },
+    { "name": "card_id", "type": "long", "required": true },
+    { "name": "hit_count", "type": "int", "required": true, "doc": "3 transacoes no mesmo card <60s" },
+    { "name": "hits", "type": {"type":"array","items":{"type":"record","name":"Hit","namespace":"com.bootcamp.payments","fields":[
+        {"name":"transaction_id","type":"long","required":true},
+        {"name":"merchant_id","type":"long","required":true},
+        {"name":"amount_cents","type":"long","required":true},
+        {"name":"event_ts","type":"long","required":true}
+      ]}},"required":true},
+    { "name": "emitted_at", "type": "long", "required": true },
+    { "name": "source_topic", "type": "string", "required": true }
+  ]
+}

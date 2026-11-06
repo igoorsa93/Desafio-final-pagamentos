@@ -1,0 +1,114 @@
+# Docker Compose — Test Environment (CI)
+# Lightweight: no Flink, no Schema Registry, uses Testcontainers pattern
+# Source: docker-expert + github-actions-creator
+
+version: '3.8'
+
+services:
+  # --- DATABASE ---
+  postgres:
+    image: postgres:15-alpine
+    container_name: desafio-postgres-test
+    environment:
+      POSTGRES_DB: desafio_final_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data  # in-memory for speed
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- KAFKA (KRaft, no ZK) ---
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: desafio-kafka-test
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,broker:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAMES: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 1
+    ports:
+      - "9093:9092"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  # --- SCHEMA REGISTRY ---
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: desafio-sr-test
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:9092"
+      SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+    ports:
+      - "8082:8081"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- REDIS (idempotency) ---
+  redis:
+    image: redis:7-alpine
+    container_name: desafio-redis-test
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- CONNECT (Debezium) ---
+  connect:
+    image: confluentinc/cp-kafka-connect:7.5.0
+    container_name: desafio-connect-test
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:9092"
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: "desafio-connect-test"
+      CONNECT_CONFIG_STORAGE_TOPIC: "desafio-test-connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "desafio-test-connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "desafio-test-connect-status"
+      CONNECT_KEY_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONNECT_PLUGIN_DIR: "/usr/share/java,/usr/share/confluent-packages"
+    ports:
+      - "8084:8083"
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors/ || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+networks:
+  default:
+    name: desafio-test-network
