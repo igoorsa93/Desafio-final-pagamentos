@@ -1,12 +1,12 @@
-# Desafio Final — Pipeline de Pagamentos (Production Grade)
+# Desafio Final — Pipeline de Pagamentos
 
-**Neon (Postgres) → CDC Debezium → Kafka (Avro) → Flink SQL (Enrichment + Fraud) → Consumer App**
+Neon (Postgres) → CDC Debezium → Kafka (Avro) → Flink SQL (Enrichment + Fraude) → Consumer App
 
-Reproduzível localmente com `docker compose up -d` ou em Confluent Cloud com `./setup.sh` (requer `.env` preenchido via `.env.example`).
+Roda local com `docker compose up -d` ou na Confluent Cloud com `./setup.sh` (precisa de `.env` preenchido a partir do `.env.example`).
 
 ---
 
-## Arquitetura (Clean Architecture + Event-Driven)
+## Arquitetura
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -22,49 +22,37 @@ Reproduzível localmente com `docker compose up -d` ou em Confluent Cloud com `.
           ▼                ▼                ▼                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         INFRASTRUCTURE LAYER (Docker/Terraform)             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  • postgres (Neon-compatible)                                       │   │
-│  │  • kafka + zookeeper (KRaft mode)                                   │   │
-│  │  • schema-registry                                                  │   │
-│  │  • connect (Debezium PostgresCdcSourceV2)                          │   │
-│  │  • flink-jobmanager + taskmanager                                   │   │
-│  │  • prometheus + grafana                                             │   │
-│  │  • redis (idempotency)                                              │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  • postgres (compatível Neon)                                               │
+│  • kafka + zookeeper (KRaft mode)                                           │
+│  • schema-registry                                                          │
+│  • connect (Debezium PostgresCdcSourceV2)                                   │
+│  • flink-jobmanager + taskmanager                                           │
+│  • prometheus + grafana                                                     │
+│  • redis (idempotency)                                                      │
 └─────────────────────────────────────────────────────────────────────────────┘
           │                │                │                │
           ▼                ▼                ▼                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         DOMAIN LAYER (Pure Business Logic)                  │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐ │
-│  │  Entities       │  │  Value Objects  │  │  Domain Events              │ │
-│  │  • Customer     │  │  • Money        │  │  • TransactionCreated       │ │
-│  │  • Account      │  │  • CardNumber   │  │  • AccountUpdated           │ │
-│  │  • Card         │  │  • Email        │  │  • FraudDetected            │ │
-│  │  • Merchant     │  │  • MCC          │  │  • VelocityRuleTriggered    │ │
-│  │  • Transaction  │  └─────────────────┘  └─────────────────────────────┘ │
-│  └─────────────────┘                                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Domain Services (Pure Functions)                                   │   │
-│  │  • VelocityRuleEngine     → MATCH_RECOGNIZE pattern                 │   │
-│  │  • EnrichmentService      → Temporal Join logic                     │   │
-│  │  • IdempotencyService     → Deduplication by transaction_id         │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  Entities: Customer, Account, Card, Merchant, Transaction                   │
+│  Value Objects: Money, CardNumber, Email, MCC                               │
+│  Domain Events: TransactionCreated, AccountUpdated, FraudDetected           │
+│  Domain Services: VelocityRuleEngine, EnrichmentService, IdempotencyService │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Ver diagrama completo: `ARCHITECTURE.md`
+Diagrama completo em `ARCHITECTURE.md`.
 
 ---
 
 ## Quick Start (Local)
 
 ```bash
-# 1. Clone e configure
+# 1. Configure
 cp .env.example .env
-# Edite .env com suas credenciais (ou use defaults locais)
+# edite .env com suas credenciais (ou use defaults locais)
 
-# 2. Suba a stack completa
+# 2. Suba tudo
 docker compose up -d
 
 # 3. Verifique saúde
@@ -73,11 +61,11 @@ curl http://localhost:8081/overview    # Flink UI
 curl http://localhost:9090             # Prometheus
 curl http://localhost:3001             # Grafana (admin/admin)
 
-# 4. Rode o seed determinístico (seed=42)
+# 4. Seed determinístico (seed=42)
 docker compose exec neon-postgres psql -U desafio_pg -d desafio-final -f /seed/seed.sql
 # ou: node seed/seed.js
 
-# 5. Deploy Flink SQL (em ordem)
+# 5. Deploy Flink SQL (nessa ordem)
 docker exec -i desafio-flink-jm /opt/flink/bin/sql-client.sh < sql/01-tables.sql
 docker exec -i desafio-flink-jm /opt/flink/bin/sql-client.sh < sql/02-temporal-join.sql
 docker exec -i desafio-flink-jm /opt/flink/bin/sql-client.sh < sql/03-fraud-velocity.sql
@@ -115,7 +103,7 @@ desafio-final/
 ├── seed/
 │   ├── seed.js               # Deterministic seed (LCG, seed=42)
 │   └── package.json
-├── consumer_app/             # FastAPI Consumer (production-grade)
+├── consumer_app/             # FastAPI Consumer
 │   ├── main.py               # App + lifespan + endpoints
 │   ├── config.py             # Pydantic Settings
 │   ├── models.py             # Domain models (Pydantic)
@@ -143,7 +131,7 @@ desafio-final/
 
 ---
 
-## Camada 1 — Fundação (Identity & Network)
+## 1. Fundação (Identity & Network)
 
 | Item | Configuração |
 |------|--------------|
@@ -162,7 +150,7 @@ confluent iam access-control list --service-account desafio-consumer
 
 ---
 
-## Camada 2 — Contrato de Dados (Avro + Schema Registry)
+## 2. Contrato de Dados (Avro + Schema Registry)
 
 - **Namespace**: `com.bootcamp.payments.*`
 - **Money**: `bytes` (int64 cents) + `decimal(15,2)` string — evita floating point
@@ -184,7 +172,7 @@ python tests/test_compatibility.py
 
 ---
 
-## Camada 3 — Ingestão (CDC Debezium)
+## 3. Ingestão (CDC Debezium)
 
 - **Connector**: `PostgresCdcSourceV2` (Debezium 2.5+)
 - **User**: `cdc_user` (least privilege: `REPLICATION`, `SELECT` on public)
@@ -192,6 +180,7 @@ python tests/test_compatibility.py
 - **Slot**: `desafio_cdc_slot` (replication slot dedicado)
 
 **Seed Determinístico (seed=42):**
+
 | Entidade | Count |
 |----------|-------|
 | customers | 200 |
@@ -200,7 +189,7 @@ python tests/test_compatibility.py
 | merchants | 60 |
 | transactions | 2.000 |
 
-**Event Types CDC:**
+**Tipos de evento CDC:**
 - `op=c` (INSERT): `before=null`, `after=nova linha`
 - `op=u` (UPDATE): `before=estado anterior`, `after=estado novo`
 - `op=d` (DELETE): `after=null`, tombstone na sequência
@@ -209,7 +198,7 @@ Ver: `evidences/01-envelopescdc.json`
 
 ---
 
-## Camada 4 — Processamento (Flink SQL)
+## 4. Processamento (Flink SQL)
 
 ### 01-tables.sql — Kafka Tables (CDC Sources + Sinks)
 - Watermarks: `event_ts - INTERVAL '10' SECOND` (bounded out-of-orderness)
@@ -221,7 +210,7 @@ Ver: `evidences/01-envelopescdc.json`
 LEFT JOIN accounts FOR SYSTEM_TIME AS OF t.event_ts AS a
   ON t.account_id = a.account_id
 ```
-- Garante: saldo da conta, status do cartão, risk do merchant **NO MOMENTO DA TRANSAÇÃO**
+- Garante: saldo da conta, status do cartão, risk do merchant **no momento da transação**
 - Watermarks alinhados (10s) em todas as tabelas de dimensão
 - Output: `desafio.payments.transactions.enriched` (Avro)
 
@@ -239,26 +228,25 @@ Ver alerta exemplo: `evidences/02-fraud-alert.json`
 
 ### 04-verify.sql — Verification Queries
 - Enriched transactions sample
-- Fraud alerts by rule/severity
-- Data quality: duplicates, null enrichments, stalled processing
-- Performance: throughput, end-to-end latency (p50/p95/p99)
+- Fraud alerts por regra/severidade
+- Data quality: duplicatas, null enrichments, processamento travado
+- Performance: throughput, latência end-to-end (p50/p95/p99)
 
 ---
 
-## Camada 5 — Operação: Quatro Pilares
+## 5. Operação
 
-| Pilar | Implementação |
-|-------|---------------|
-| **① Observabilidade** | Prometheus + Grafana dashboards; metrics: `consumer_transactions_processed_total`, `consumer_fraud_alerts_received_total`, `consumer_dedup_hits_total`, `consumer_processing_latency_seconds`; alerts: CDC lag > 5min, Flink checkpoint failed, fraud spike, consumer lag > 10k |
-| **② Segurança** | Zero Trust: least-privilege SAs, PII/PCI tags no schema, TLS em trânsito, secrets fora do código, RLS no Postgres multi-tenancy ready |
-| **③ Custos** | **US$ 28,47/mês** (Confluent Basic + Neon Basic, 7 dias); alavancas: tiered storage (-40%), Flink autoscale (-50%), spot instances, retention 3d para topics não-críticos — ver `scripts/cost_report.py` |
-| **④ Confiabilidade** | Exactly-once: Flink checkpointing (10s) + Kafka transactional producer + consumer dedup (Redis SETNX TTL 24h); idempotency key por `transaction_id`; DLQ para falhas de deserialização; restart from checkpoint |
+**Observabilidade:** Prometheus + Grafana dashboards; metrics: `consumer_transactions_processed_total`, `consumer_fraud_alerts_received_total`, `consumer_dedup_hits_total`, `consumer_processing_latency_seconds`; alerts: CDC lag > 5min, Flink checkpoint failed, fraud spike, consumer lag > 10k
+
+**Segurança:** least-privilege SAs, PII/PCI tags no schema, TLS em trânsito, secrets fora do código, RLS no Postgres multi-tenancy ready
+
+**Custos:** **US$ 28,47/mês** (Confluent Basic + Neon Basic, 7 dias); alavancas: tiered storage (-40%), Flink autoscale (-50%), spot instances, retention 3d para topics não-críticos — ver `scripts/cost_report.py`
+
+**Confiabilidade:** Exactly-once: Flink checkpointing (10s) + Kafka transactional producer + consumer dedup (Redis SETNX TTL 24h); idempotency key por `transaction_id`; DLQ para falhas de deserialização; restart from checkpoint
 
 ---
 
-## Consumer App (Production-Grade)
-
-**FastAPI + AIOKafka + Redis + Prometheus**
+## Consumer App (FastAPI + AIOKafka + Redis + Prometheus)
 
 Endpoints:
 - `GET /health` — Health check (Kafka, Redis, Schema Registry)
@@ -318,20 +306,3 @@ TEARDOWN_OK
 - [monitoring/rules/pipeline.yml](monitoring/rules/pipeline.yml) — Alerting rules
 - [scripts/cost_report.py](scripts/cost_report.py) — Cost modeling
 - [consumer_app/](consumer_app/) — Consumer app source
-
----
-
-## Skills Aplicadas
-
-Este projeto foi aprimorado com as seguintes skills do Claude Code:
-
-| Skill | Aplicação |
-|-------|-----------|
-| `senior-architect` | ADR, diagramas, Clean Architecture, decision records |
-| `senior-backend` | API scaffolding, database migration patterns, load testing |
-| `postgresql` | Schema otimizado: domains, partitions, RLS, triggers, generated columns |
-| `docker-expert` | Multi-stage builds, health checks, resource limits, KRaft Kafka |
-| `github-actions-creator` | CI/CD pipeline completo com lint, test, build, deploy |
-| `software-architecture` | Library-first, early returns, decomposition, observability |
-| `workflow-automation` | Durable execution patterns, observability, alerting |
-| `code-reviewer` | Quality gates, static analysis, type checking |
