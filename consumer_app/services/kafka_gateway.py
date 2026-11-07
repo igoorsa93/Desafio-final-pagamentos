@@ -5,7 +5,6 @@ import structlog
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
-from confluent_kafka.serialization import SerializationContext, MessageField
 
 from consumer_app.config import settings
 from consumer_app.models import EnrichedTransaction, FraudAlert
@@ -24,7 +23,9 @@ class KafkaGateway:
 
     async def connect(self) -> None:
         # Schema Registry client
-        self._schema_registry = SchemaRegistryClient({"url": settings.schema_registry_url})
+        self._schema_registry = SchemaRegistryClient(
+            {"url": settings.schema_registry_url}
+        )
 
         # Consumer
         self._consumer = AIOKafkaConsumer(
@@ -37,7 +38,10 @@ class KafkaGateway:
             value_deserializer=lambda m: m,  # raw bytes, deserialize manually
         )
         await self._consumer.start()
-        logger.info("kafka_consumer_started", topics=[settings.topic_transactions, settings.topic_fraud_alerts])
+        logger.info(
+            "kafka_consumer_started",
+            topics=[settings.topic_transactions, settings.topic_fraud_alerts],
+        )
 
         # Producer (for dead letter / reprocessing)
         self._producer = AIOKafkaProducer(
@@ -55,44 +59,65 @@ class KafkaGateway:
 
     async def consume_transactions(self) -> AsyncIterator[EnrichedTransaction]:
         """Consume enriched transactions from Flink output topic"""
+        if not self._consumer:
+            return
         async for msg in self._consumer:
             if msg.topic == settings.topic_transactions:
                 try:
                     # Deserialize Avro (simplified - in production use proper deserializer)
-                    transaction = EnrichedTransaction.model_validate_json(msg.value.decode())
+                    transaction = EnrichedTransaction.model_validate_json(
+                        msg.value.decode()
+                    )
                     yield transaction
                 except Exception as e:
-                    logger.error("deserialize_failed", error=str(e), topic=msg.topic, offset=msg.offset)
+                    logger.error(
+                        "deserialize_failed",
+                        error=str(e),
+                        topic=msg.topic,
+                        offset=msg.offset,
+                    )
                     # Send to DLQ
                     await self.send_dlq(msg, str(e))
             await self._consumer.commit()
 
     async def consume_fraud_alerts(self) -> AsyncIterator[FraudAlert]:
         """Consume fraud alerts from Flink MATCH_RECOGNIZE output"""
+        if not self._consumer:
+            return
         async for msg in self._consumer:
             if msg.topic == settings.topic_fraud_alerts:
                 try:
                     alert = FraudAlert.model_validate_json(msg.value.decode())
                     yield alert
                 except Exception as e:
-                    logger.error("deserialize_fraud_failed", error=str(e), offset=msg.offset)
+                    logger.error(
+                        "deserialize_fraud_failed", error=str(e), offset=msg.offset
+                    )
                     await self.send_dlq(msg, str(e))
             await self._consumer.commit()
 
     async def send_dlq(self, msg, error: str) -> None:
         """Send failed message to dead letter queue"""
+        if not self._producer:
+            logger.warning("send_dlq_skipped_no_producer", topic=msg.topic)
+            return
         dlq_topic = f"{msg.topic}.dlq"
-        await self._producer.send_and_wait(dlq_topic, {
-            "original_topic": msg.topic,
-            "original_partition": msg.partition,
-            "original_offset": msg.offset,
-            "error": error,
-            "payload": msg.value.decode() if msg.value else None,
-        })
+        await self._producer.send_and_wait(
+            dlq_topic,
+            {
+                "original_topic": msg.topic,
+                "original_partition": msg.partition,
+                "original_offset": msg.offset,
+                "error": error,
+                "payload": msg.value.decode() if msg.value else None,
+            },
+        )
         logger.warning("sent_to_dlq", topic=dlq_topic, original_topic=msg.topic)
 
     async def health_check(self) -> bool:
         try:
+            if not self._consumer:
+                return False
             # Simple metadata fetch
             await self._consumer._client.fetch_api_versions()
             return True

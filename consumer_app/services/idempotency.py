@@ -1,5 +1,5 @@
 """Idempotency Service — Redis SETNX with TTL"""
-import redis.asyncio as redis
+import redis.asyncio as redis  # type: ignore[import-untyped]
 from typing import Optional
 import structlog
 
@@ -11,7 +11,7 @@ logger = structlog.get_logger(__name__)
 class IdempotencyService:
     """Deduplication via Redis SETNX — exactly-once consumer side"""
 
-    def __init__(self, redis_url: str = None, ttl_seconds: int = None):
+    def __init__(self, redis_url: str | None = None, ttl_seconds: int | None = None):
         self._redis_url = redis_url or settings.redis_url
         self._ttl = ttl_seconds or settings.idempotency_ttl_seconds
         self._client: Optional[redis.Redis] = None
@@ -37,8 +37,8 @@ class IdempotencyService:
         acquired = await self._client.set(
             f"idempotency:{key}",
             "1",
-            nx=True,      # only set if not exists
-            ex=self._ttl  # TTL in seconds
+            nx=True,  # only set if not exists
+            ex=self._ttl,  # TTL in seconds
         )
         return acquired is True
 

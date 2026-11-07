@@ -7,6 +7,7 @@ from decimal import Decimal
 
 class Money(BaseModel):
     """Value object for monetary amounts"""
+
     cents: int = Field(ge=0)
 
     @property
@@ -19,6 +20,7 @@ class Money(BaseModel):
 
 class EnrichedTransaction(BaseModel):
     """Enriched transaction from Flink SQL temporal join"""
+
     transaction_id: int
     account_id: int
     card_id: int
@@ -43,6 +45,7 @@ class EnrichedTransaction(BaseModel):
 
 class FraudAlert(BaseModel):
     """Fraud alert from Flink MATCH_RECOGNIZE"""
+
     alert_id: str
     card_id: int
     transaction_ids: list[int]

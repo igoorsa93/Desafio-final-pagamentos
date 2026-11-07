@@ -104,7 +104,13 @@ class TestHealthResponse:
             schema_registry_connected=True,
         )
         assert health.status == "healthy"
-        assert all([health.kafka_connected, health.redis_connected, health.schema_registry_connected])
+        assert all(
+            [
+                health.kafka_connected,
+                health.redis_connected,
+                health.schema_registry_connected,
+            ]
+        )
 
     def test_degraded(self):
         health = HealthResponse(

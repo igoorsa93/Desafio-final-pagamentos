@@ -1,6 +1,11 @@
 """Metrics Service — Prometheus exposition"""
-from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest
-from typing import Optional
+from prometheus_client import (
+    Counter,
+    Histogram,
+    Gauge,
+    CollectorRegistry,
+    generate_latest,
+)
 from datetime import datetime
 import structlog
 
@@ -15,27 +20,27 @@ transactions_processed = Counter(
     "consumer_transactions_processed_total",
     "Total enriched transactions processed",
     ["status"],
-    registry=registry
+    registry=registry,
 )
 
 fraud_alerts_received = Counter(
     "consumer_fraud_alerts_received_total",
     "Total fraud alerts received from Flink",
     ["severity"],
-    registry=registry
+    registry=registry,
 )
 
 dedup_hits = Counter(
     "consumer_dedup_hits_total",
     "Total duplicate transactions detected via idempotency",
-    registry=registry
+    registry=registry,
 )
 
 dlq_messages = Counter(
     "consumer_dlq_messages_total",
     "Total messages sent to dead letter queue",
     ["topic"],
-    registry=registry
+    registry=registry,
 )
 
 # Histograms
@@ -43,21 +48,21 @@ processing_latency = Histogram(
     "consumer_processing_latency_seconds",
     "Time from event_ts to processing complete",
     buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
-    registry=registry
+    registry=registry,
 )
 
 # Gauges
 last_event_timestamp = Gauge(
     "consumer_last_event_timestamp",
     "Unix timestamp of last processed event",
-    registry=registry
+    registry=registry,
 )
 
 consumer_lag = Gauge(
     "consumer_kafka_lag",
     "Consumer lag per partition",
     ["topic", "partition"],
-    registry=registry
+    registry=registry,
 )
 
 
@@ -74,7 +79,9 @@ class MetricsService:
             "last_event_ts": None,
         }
 
-    def record_transaction(self, status: str, latency_ms: float, event_ts: datetime) -> None:
+    def record_transaction(
+        self, status: str, latency_ms: float, event_ts: datetime
+    ) -> None:
         transactions_processed.labels(status=status).inc()
         processing_latency.observe(latency_ms / 1000.0)
         last_event_timestamp.set(event_ts.timestamp())
@@ -101,14 +108,19 @@ class MetricsService:
     def get_snapshot(self) -> dict:
         avg_latency = 0.0
         if self._snapshot["processing_latency_count"] > 0:
-            avg_latency = self._snapshot["processing_latency_ms_sum"] / self._snapshot["processing_latency_count"]
+            avg_latency = (
+                self._snapshot["processing_latency_ms_sum"]
+                / self._snapshot["processing_latency_count"]
+            )
 
         return {
             "transactions_processed": self._snapshot["transactions_processed"],
             "fraud_alerts_generated": self._snapshot["fraud_alerts_generated"],
             "dedup_hits": self._snapshot["dedup_hits"],
             "processing_latency_ms_avg": round(avg_latency, 2),
-            "last_event_ts": self._snapshot["last_event_ts"].isoformat() if self._snapshot["last_event_ts"] else None,
+            "last_event_ts": self._snapshot["last_event_ts"].isoformat()
+            if self._snapshot["last_event_ts"]
+            else None,
         }
 
     def prometheus_output(self) -> bytes:

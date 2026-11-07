@@ -1,9 +1,6 @@
 """Unit Tests — Idempotency Service (mocked)"""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import sys
-sys.path.insert(0, "C:\\Users\\Igor Cardoso\\OneDrive\\Área de Trabalho\\Desafio DIO")
+from unittest.mock import AsyncMock
 
 from consumer_app.services.idempotency import IdempotencyService
 

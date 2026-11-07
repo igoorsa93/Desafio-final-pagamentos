@@ -11,7 +11,7 @@ from consumer_app.config import settings
 from consumer_app.models import HealthResponse, MetricsSnapshot
 from consumer_app.services.idempotency import IdempotencyService
 from consumer_app.services.kafka_gateway import KafkaGateway
-from consumer_app.services.metrics import MetricsService, prometheus_output
+from consumer_app.services.metrics import MetricsService
 
 # Structured logging
 structlog.configure(
@@ -82,7 +82,11 @@ async def consume_transactions_loop():
             # Idempotency check
             if not await idempotency.try_acquire(tx.idempotency_key):
                 metrics.record_dedup_hit()
-                logger.info("duplicate_transaction", transaction_id=tx.transaction_id, key=tx.idempotency_key)
+                logger.info(
+                    "duplicate_transaction",
+                    transaction_id=tx.transaction_id,
+                    key=tx.idempotency_key,
+                )
                 continue
 
             # Process transaction (business logic here)
@@ -97,13 +101,24 @@ async def consume_transactions_loop():
                 merchant_id=tx.merchant_id,
             )
         except Exception as e:
-            logger.error("process_transaction_failed", error=str(e), transaction_id=tx.transaction_id)
-            await kafka.send_dlq(type("Msg", (), {
-                "topic": settings.topic_transactions,
-                "partition": 0,
-                "offset": 0,
-                "value": tx.model_dump_json().encode()
-            })(), str(e))
+            logger.error(
+                "process_transaction_failed",
+                error=str(e),
+                transaction_id=tx.transaction_id,
+            )
+            await kafka.send_dlq(
+                type(
+                    "Msg",
+                    (),
+                    {
+                        "topic": settings.topic_transactions,
+                        "partition": 0,
+                        "offset": 0,
+                        "value": tx.model_dump_json().encode(),
+                    },
+                )(),
+                str(e),
+            )
 
 
 async def consume_fraud_alerts_loop():
@@ -122,7 +137,9 @@ async def consume_fraud_alerts_loop():
             )
             # TODO: Webhook, notification, case creation
         except Exception as e:
-            logger.error("process_fraud_alert_failed", error=str(e), alert_id=alert.alert_id)
+            logger.error(
+                "process_fraud_alert_failed", error=str(e), alert_id=alert.alert_id
+            )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -156,7 +173,9 @@ async def health():
 @app.get("/metrics", response_class=PlainTextResponse)
 async def prometheus_metrics():
     """Prometheus metrics exposition"""
-    return Response(content=prometheus_output(), media_type="text/plain")
+    if not metrics:
+        raise HTTPException(503, "Metrics not initialized")
+    return Response(content=metrics.prometheus_output(), media_type="text/plain")
 
 
 @app.get("/metrics/snapshot", response_model=MetricsSnapshot)
@@ -176,4 +195,5 @@ async def reprocess_dlq(topic: str):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=settings.host, port=settings.port)

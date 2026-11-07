@@ -5,8 +5,6 @@
 
 import os
 import sys
-import json
-import glob
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSchema
 
@@ -23,10 +21,9 @@ if not all([SR_URL, SR_API_KEY, SR_API_SECRET]):
     sys.exit(1)
 
 # Create client
-client = SchemaRegistryClient({
-    "url": SR_URL,
-    "basic.auth.user.info": f"{SR_API_KEY}:{SR_API_SECRET}"
-})
+client = SchemaRegistryClient(
+    {"url": SR_URL, "basic.auth.user.info": f"{SR_API_KEY}:{SR_API_SECRET}"}
+)
 
 # Namespace mapping
 SCHEMA_SUBJECTS = {
@@ -51,7 +48,7 @@ def check_compatibility(schema_file: str, subject: str) -> dict:
             "schema_file": os.path.basename(schema_file),
             "compatible": is_compatible,
             "compatibility_level": "BACKWARD",
-            "error": None
+            "error": None,
         }
     except Exception as e:
         return {
@@ -59,7 +56,7 @@ def check_compatibility(schema_file: str, subject: str) -> dict:
             "schema_file": os.path.basename(schema_file),
             "compatible": False,
             "compatibility_level": "BACKWARD",
-            "error": str(e)
+            "error": str(e),
         }
 
 
@@ -72,17 +69,9 @@ def register_schema(schema_file: str, subject: str) -> dict:
 
     try:
         schema_id = client.register_schema(subject, schema)
-        return {
-            "subject": subject,
-            "schema_id": schema_id,
-            "status": "registered"
-        }
+        return {"subject": subject, "schema_id": schema_id, "status": "registered"}
     except Exception as e:
-        return {
-            "subject": subject,
-            "status": "failed",
-            "error": str(e)
-        }
+        return {"subject": subject, "status": "failed", "error": str(e)}
 
 
 def main():
@@ -103,7 +92,7 @@ def main():
         results.append(result)
 
         if result["compatible"]:
-            print(f"  ✓ COMPATIBLE (BACKWARD)")
+            print("  ✓ COMPATIBLE (BACKWARD)")
         else:
             print(f"  ✗ INCOMPATIBLE: {result['error']}")
 
